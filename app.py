@@ -2,10 +2,10 @@
 # -*- coding: utf-8 -*-
 """
 Streamlit – Extrator de Contracheques
-Adobe PDF Extract + OCR/pdfplumber fallback
+Adobe PDF Extract (JSON Base64) + OCR/pdfplumber fallback
 """
 
-import re, io, json, time, requests, pdfplumber, pandas as pd, streamlit as st, pytesseract
+import re, io, json, time, base64, requests, pdfplumber, pandas as pd, streamlit as st, pytesseract
 from PIL import Image
 from functools import lru_cache
 
@@ -44,30 +44,35 @@ def get_access_token():
     return token
 
 # --------------------------------------------------------------------
-# ---------- Adobe Extract PDF → texto por página --------------------
+# ---------- Adobe Extract PDF → texto por página (JSON Base64) ------
 # --------------------------------------------------------------------
 def extract_pdf_adobe(file_bytes):
     """
-    Envia o PDF para Adobe PDF Extract e devolve lista de textos (um por página).
+    Envia o PDF como Base64 em JSON e devolve lista de textos (um por página).
     """
     token = get_access_token()
     headers = {
         "Authorization": f"Bearer {token}",
         "x-api-key": CLIENT_ID,
+        "Content-Type": "application/json",
     }
 
-    files = {
-        "file": ("document.pdf", io.BytesIO(file_bytes), "application/pdf"),
-        "extractRenditions": (None, "false"),
-        "elements": (None, json.dumps({"elements": ["text"]}), "application/json"),
+    payload = {
+        "inputPDF": {
+            "bytes": base64.b64encode(file_bytes).decode("utf-8")
+        },
+        "options": {
+            "elements": ["text"],
+            "extractRenditions": False
+        }
     }
 
-    resp = requests.post(EXTRACT_URL, headers=headers, files=files, timeout=120)
+    resp = requests.post(EXTRACT_URL, headers=headers, json=payload, timeout=120)
     resp.raise_for_status()
-    payload = resp.json()
+    data = resp.json()
 
     pages = {}
-    for elem in payload.get("elements", []):
+    for elem in data.get("elements", []):
         pages.setdefault(elem["Page"], []).append(elem["Text"])
 
     return ["\n".join(pages[p]) for p in sorted(pages)]
