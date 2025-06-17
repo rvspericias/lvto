@@ -28,7 +28,7 @@ def normalizar_valor(txt: str):
 
 def extrair_recibo(page):
     """Extrai (mes_ano, proventos{}, fgts_base, avisos[]) ou None."""
-    avisos, texto = [], page.extract_text(x_tolerance=1, y_tolerance=3) or ""
+    avisos, texto = [], page.extract_text() or ""
     linhas = texto.splitlines()
 
     # Mês/Ano
