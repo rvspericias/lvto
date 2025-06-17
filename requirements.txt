@@ -4,5 +4,4 @@ pandas==2.2.2
 openpyxl==3.1.2
 pytesseract==0.3.10
 Pillow==10.3.0
-requests==2.32.2
-requests-toolbelt==1.0.0
+openai==1.30.1
