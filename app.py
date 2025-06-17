@@ -50,9 +50,6 @@ def get_access_token():
 # ---------- Adobe Extract PDF → texto por página --------------------
 # --------------------------------------------------------------------
 def extract_pdf_adobe(file_bytes):
-    """
-    Envia o PDF para Adobe PDF Extract e devolve lista de textos (um por página).
-    """
     token = get_access_token()
     headers = {
         "Authorization": f"Bearer {token}",
@@ -60,14 +57,14 @@ def extract_pdf_adobe(file_bytes):
     }
 
     files = {
+        # PDF
         "file": ("document.pdf", file_bytes, "application/pdf"),
-    }
-    data = {
-        "extractRenditions": "false",
-        "elements": json.dumps({"elements": ["text"]}),
+        # Demais campos como "partes" do multipart
+        "extractRenditions": (None, "false"),
+        "elements": (None, json.dumps({"elements": ["text"]}), "application/json"),
     }
 
-    resp = requests.post(EXTRACT_URL, headers=headers, files=files, data=data, timeout=120)
+    resp = requests.post(EXTRACT_URL, headers=headers, files=files, timeout=120)
     resp.raise_for_status()
     payload = resp.json()
 
@@ -75,7 +72,6 @@ def extract_pdf_adobe(file_bytes):
     for elem in payload.get("elements", []):
         pages.setdefault(elem["Page"], []).append(elem["Text"])
 
-    # Ordena páginas
     return ["\n".join(pages[p]) for p in sorted(pages)]
 
 # --------------------------------------------------------------------
