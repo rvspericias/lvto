@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Streamlit – Extrator de Contracheques
-Adobe PDF Extract (JSON Base64) + OCR/pdfplumber fallback
+Adobe PDF Extract (JSON Base64 simplificado) + OCR/pdfplumber fallback
 """
 
 import re, io, json, time, base64, requests, pdfplumber, pandas as pd, streamlit as st, pytesseract
@@ -44,11 +44,11 @@ def get_access_token():
     return token
 
 # --------------------------------------------------------------------
-# ---------- Adobe Extract PDF → texto por página (JSON Base64) ------
+# ---------- Adobe Extract PDF → texto por página (JSON simples) -----
 # --------------------------------------------------------------------
 def extract_pdf_adobe(file_bytes):
     """
-    Envia o PDF como Base64 em JSON e devolve lista de textos (um por página).
+    Envia o PDF como Base64 em JSON simplificado e devolve lista de textos (um por página).
     """
     token = get_access_token()
     headers = {
@@ -58,19 +58,18 @@ def extract_pdf_adobe(file_bytes):
     }
 
     payload = {
-        "inputPDF": {
-            "bytes": base64.b64encode(file_bytes).decode("utf-8")
-        },
-        "options": {
-            "elements": ["text"],
-            "extractRenditions": False
-        }
+        "fileContent": base64.b64encode(file_bytes).decode("utf-8"),
+        "mimeType": "application/pdf",
+        "elements": ["text"],
+        "extractRenditions": False
     }
 
     resp = requests.post(EXTRACT_URL, headers=headers, json=payload, timeout=120)
-    resp.raise_for_status()
-    data = resp.json()
+    if resp.status_code != 200:
+        st.error(f"Adobe Extract retornou {resp.status_code}: {resp.text}")
+        resp.raise_for_status()
 
+    data = resp.json()
     pages = {}
     for elem in data.get("elements", []):
         pages.setdefault(elem["Page"], []).append(elem["Text"])
