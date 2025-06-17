@@ -74,12 +74,7 @@ def extrair_recibo(page):
 def processar_pdf(file_bytes, pagina_ini, pagina_fim):
    
     registros, rubricas, avisos_totais = [], set(), []
-
-if idx == pagina_ini - 1:
-    texto_debug = pdf.pages[idx].extract_text(x_tolerance=1, y_tolerance=3)
-    st.subheader("🔎 Conteúdo bruto da 1ª página (debug)")
-    st.code(texto_debug or "Nenhum texto extraído")
-    
+  
     with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
         total_pag = len(pdf.pages)
         pagina_ini = max(1, pagina_ini)
@@ -98,6 +93,11 @@ if idx == pagina_ini - 1:
                                   "Base FGTS": fgts})
                 avisos_totais.extend(avisos)
 
+if idx == pagina_ini - 1:
+    texto_debug = pdf.pages[idx].extract_text(x_tolerance=1, y_tolerance=3)
+    st.subheader("🔎 Conteúdo bruto da 1ª página (debug)")
+    st.code(texto_debug or "Nenhum texto extraído")
+    
     # ---------- Se nada foi capturado ----------
     if not registros:
         return pd.DataFrame(), avisos_totais
