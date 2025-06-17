@@ -1,20 +1,94 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Web‑app Streamlit – Extração dinâmica de contracheques (SANOFI) com OCR fallback
+Web‑app Streamlit – Extração dinâmica de contracheques com Adobe PDF Extract
+e OCR fallback (pdfplumber + Tesseract)
 """
 
-import re, io, pdfplumber, pandas as pd, streamlit as st, pytesseract
+import re, io, json, time, uuid, requests, pdfplumber, pandas as pd, streamlit as st, pytesseract
 from PIL import Image
+from functools import lru_cache
 
-# ---------- Configuração ----------
-st.set_page_config(page_title="Leitor de Contracheques", layout="wide")
+# --------------------------------------------------------------------
+# ---------- CONFIGURAÇÕES DA ADOBE (substitua pelos seus dados) -----
+# --------------------------------------------------------------------
+CLIENT_ID        = "b9cf3786302d45c2803158771beea463"
+CLIENT_SECRET    = "p8e-dJzha1EVFGaVN_F567J3fAG9Z6rSQLXj"
+ORG_ID           = "C63A22566851828C0A495C2F@AdobeOrg"
+SCOPES           = "openid,AdobeID,DCAPI"
+TOKEN_URL        = "https://ims-na1.adobelogin.com/ims/token/v3"
+EXTRACT_URL      = "https://pdf-services.adobe.io/operation/extract"
 
-# ---------- Expressões regulares ----------
+# --------------------------------------------------------------------
+# ---------- TOKEN – obtido e armazenado em cache --------------------
+# --------------------------------------------------------------------
+@lru_cache(maxsize=1)
+def _cached_token():
+    """
+    Faz a requisição ao IMS, devolvendo (token, expiração_epoch).
+    O resultado é armazenado em cache pelo lru_cache.
+    """
+    data = {
+        "client_id": CLIENT_ID,
+        "client_secret": CLIENT_SECRET,
+        "grant_type": "client_credentials",
+        "scope": SCOPES,
+    }
+    r = requests.post(TOKEN_URL, data=data, timeout=30)
+    r.raise_for_status()
+    resp = r.json()
+    return resp["access_token"], time.time() + resp["expires_in"] - 60  # 1 min de folga
+
+def get_access_token():
+    token, exp = _cached_token()
+    if time.time() > exp:                # expirou → limpa cache e refaz
+        _cached_token.cache_clear()
+        token, exp = _cached_token()
+    return token
+
+# --------------------------------------------------------------------
+# ---------- Adobe Extract PDF → texto por página --------------------
+# --------------------------------------------------------------------
+def extract_pdf_adobe(file_bytes):
+    """
+    Envia o PDF para o Adobe PDF Extract e devolve lista de textos (1 por página).
+    """
+    token = get_access_token()
+    boundary = uuid.uuid4().hex
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "x-api-key": CLIENT_ID,
+        "Accept": "application/json",
+        "Content-Type": f"multipart/form-data; boundary={boundary}",
+    }
+
+    # Multipart manual (requests faz isso automaticamente, mas precisamos
+    # controlar o cabeçalho Content-Type do campo 'options')
+    files = {
+        "file": ("document.pdf", file_bytes, "application/pdf"),
+        "options": ("options", json.dumps({"elements": ["text"]}), "application/json"),
+    }
+    r = requests.post(EXTRACT_URL, headers=headers, files=files, timeout=120)
+    r.raise_for_status()
+    data = r.json()
+
+    # Organiza texto por página
+    pages = {}
+    for elem in data.get("elements", []):
+        page = elem["Page"]
+        pages.setdefault(page, []).append(elem["Text"])
+
+    # Garante ordem
+    textos = ["\n".join(pages[p]) for p in sorted(pages)]
+    return textos
+
+# --------------------------------------------------------------------
+# ---------- Expressões regulares (mantidas) -------------------------
+# --------------------------------------------------------------------
 re_ref  = re.compile(r"Refer[eê]ncia[:\s]+([A-ZÇ]+)\/(\d{4})", re.I)
 re_fgts = re.compile(r"BASE\s+CALC\.\s+FGTS\s+([\d\.,]+)", re.I)
 
-# ---------- Funções utilitárias ----------
+# ---------- Funções utilitárias (mantidas) --------------------------
 def normalizar_valor(txt):
     txt = txt.strip()
     if not txt or txt in {"-", "0,00"}:
@@ -24,12 +98,8 @@ def normalizar_valor(txt):
     except ValueError:
         return 0.0, False
 
-def texto_pagina(page):
-    return page.extract_text(x_tolerance=1, y_tolerance=3) or ""
-
-def extrair_recibo(page):
-    avisos, texto = [], texto_pagina(page)
-    linhas = texto.splitlines()
+def extrair_recibo_texto(texto):
+    avisos, linhas = [], texto.splitlines()
 
     # Mês/Ano
     mes_ano = None
@@ -71,14 +141,25 @@ def extrair_recibo(page):
 
     return mes_ano, proventos, fgts_base, avisos
 
+# --------------------------------------------------------------------
+# ---------- Processamento principal --------------------------------
+# --------------------------------------------------------------------
 def processar_pdf(file_bytes, pagina_ini, pagina_fim):
+    # 1) Tenta via Adobe
+    try:
+        textos = extract_pdf_adobe(file_bytes)
+        st.info("✅ Texto extraído via Adobe PDF Extract.")
+    except Exception as e:
+        st.warning(f"⚠️ Falha no Adobe Extract ({e}). Usando OCR/pdfplumber.")
+        textos = []
+
     registros, rubricas, avisos_totais = [], set(), []
-    with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
-        total_pag = len(pdf.pages)
+    if textos:
+        total_pag = len(textos)
         pagina_ini = max(1, pagina_ini)
         pagina_fim = min(total_pag, pagina_fim)
         for idx in range(pagina_ini-1, pagina_fim):
-            resultado = extrair_recibo(pdf.pages[idx])
+            resultado = extrair_recibo_texto(textos[idx])
             if resultado:
                 mes_ano, provs, fgts, avisos = resultado
                 if any(r["Mês/Ano"] == mes_ano for r in registros):
@@ -88,6 +169,27 @@ def processar_pdf(file_bytes, pagina_ini, pagina_fim):
                                   "Proventos": provs,
                                   "Base FGTS": fgts})
                 avisos_totais.extend(avisos)
+
+    # 2) Fallback OCR/pdfplumber se nada encontrado
+    if not registros:
+        with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+            total_pag = len(pdf.pages)
+            pagina_ini = max(1, pagina_ini)
+            pagina_fim = min(total_pag, pagina_fim)
+            for idx in range(pagina_ini-1, pagina_fim):
+                page = pdf.pages[idx]
+                # OCR se não houver texto
+                texto = page.extract_text() or pytesseract.image_to_string(Image.open(io.BytesIO(page.to_image(resolution=300).original)))
+                resultado = extrair_recibo_texto(texto)
+                if resultado:
+                    mes_ano, provs, fgts, avisos = resultado
+                    if any(r["Mês/Ano"] == mes_ano for r in registros):
+                        continue
+                    rubricas.update(provs.keys())
+                    registros.append({"Mês/Ano": mes_ano,
+                                      "Proventos": provs,
+                                      "Base FGTS": fgts})
+                    avisos_totais.extend(avisos)
 
     if not registros:
         return pd.DataFrame(), avisos_totais
@@ -107,8 +209,11 @@ def processar_pdf(file_bytes, pagina_ini, pagina_fim):
     df = df[["Mês/Ano"] + rubricas + ["Base FGTS"]]
     return df, avisos_totais
 
-# ---------- Interface ----------
-st.title("📑 Extrator de Contracheques (SANOFI) – OCR Ready")
+# --------------------------------------------------------------------
+# ---------- INTERFACE STREAMLIT -------------------------------------
+# --------------------------------------------------------------------
+st.set_page_config(page_title="Leitor de Contracheques", layout="wide")
+st.title("📑 Extrator de Contracheques – Adobe PDF Extract + OCR")
 
 arquivo = st.file_uploader("Arraste e solte o PDF", type=["pdf"])
 col1, col2 = st.columns(2)
