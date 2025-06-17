@@ -2,12 +2,13 @@
 # -*- coding: utf-8 -*-
 """
 Streamlit – Extrator de Contracheques
-Adobe PDF Extract (JSON Base64 simplificado) + OCR/pdfplumber fallback
+Adobe PDF Extract (multipart via requests‑toolbelt) + OCR/pdfplumber fallback
 """
 
 import re, io, json, time, base64, requests, pdfplumber, pandas as pd, streamlit as st, pytesseract
 from PIL import Image
 from functools import lru_cache
+from requests_toolbelt.multipart.encoder import MultipartEncoder  # NOVO
 
 # --------------------------------------------------------------------
 # ---------- CONFIGURAÇÕES DA ADOBE ----------------------------------
@@ -44,27 +45,29 @@ def get_access_token():
     return token
 
 # --------------------------------------------------------------------
-# ---------- Adobe Extract PDF → texto por página (JSON simples) -----
+# ---------- Adobe Extract PDF → texto por página --------------------
 # --------------------------------------------------------------------
 def extract_pdf_adobe(file_bytes):
     """
-    Envia o PDF como Base64 em JSON simplificado e devolve lista de textos (um por página).
+    Envia o PDF via multipart/form-data (requests‑toolbelt) e devolve lista de textos.
     """
     token = get_access_token()
+
+    multipart_data = MultipartEncoder(
+        fields={
+            "file": ("file.pdf", io.BytesIO(file_bytes), "application/pdf"),
+            "extractRenditions": "false",
+            "elements": ("", json.dumps({"elements": ["text"]}), "application/json"),
+        }
+    )
+
     headers = {
         "Authorization": f"Bearer {token}",
         "x-api-key": CLIENT_ID,
-        "Content-Type": "application/json",
+        "Content-Type": multipart_data.content_type,
     }
 
-    payload = {
-        "fileContent": base64.b64encode(file_bytes).decode("utf-8"),
-        "mimeType": "application/pdf",
-        "elements": ["text"],
-        "extractRenditions": False
-    }
-
-    resp = requests.post(EXTRACT_URL, headers=headers, json=payload, timeout=120)
+    resp = requests.post(EXTRACT_URL, headers=headers, data=multipart_data, timeout=120)
     if resp.status_code != 200:
         st.error(f"Adobe Extract retornou {resp.status_code}: {resp.text}")
         resp.raise_for_status()
