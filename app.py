@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Web‑app Streamlit – Extração de contracheques
-Adobe PDF Extract + OCR/pdfplumber fallback
+Streamlit – Extrator de Contracheques
+Adobe PDF Extract (Server‑to‑Server) + OCR/pdfplumber fallback
 """
 
 import re, io, json, time, requests, pdfplumber, pandas as pd, streamlit as st, pytesseract
@@ -10,31 +10,34 @@ from PIL import Image
 from functools import lru_cache
 
 # --------------------------------------------------------------------
-# ---------- CONFIGURAÇÕES DA ADOBE (substitua se mudar) -------------
+# ---------- CONFIGURAÇÕES DA ADOBE ----------------------------------
 # --------------------------------------------------------------------
 CLIENT_ID     = "b9cf3786302d45c2803158771beea463"
 CLIENT_SECRET = "p8e-dJzha1EVFGaVN_F567J3fAG9Z6rSQLXj"
 ORG_ID        = "C63A22566851828C0A495C2F@AdobeOrg"
+SCOPES        = "openid,AdobeID,DCAPI"
 
-SCOPES    = "openid,AdobeID,DCAPI"
-TOKEN_URL = "https://ims-na1.adobelogin.com/ims/token/v3"
-EXTRACT_URL = "https://pdf-services.adobe.io/operation/extract"
+TOKEN_URL     = "https://ims-na1.adobelogin.com/ims/token/v3"
+EXTRACT_URL   = "https://pdf-services.adobe.io/operation/extract"
 
 # --------------------------------------------------------------------
-# ---------- TOKEN – cache automático -------------------------------
+# ---------- TOKEN – cache automático --------------------------------
 # --------------------------------------------------------------------
 @lru_cache(maxsize=1)
 def _cached_token():
+    """
+    Solicita token (Client Credentials) e armazena em cache até ~1 min antes de expirar.
+    """
     data = {
         "client_id": CLIENT_ID,
         "client_secret": CLIENT_SECRET,
         "grant_type": "client_credentials",
         "scope": SCOPES,
     }
-    r = requests.post(TOKEN_URL, data=data, timeout=30)
-    r.raise_for_status()
-    resp = r.json()
-    return resp["access_token"], time.time() + resp["expires_in"] - 60
+    resp = requests.post(TOKEN_URL, data=data, timeout=30)
+    resp.raise_for_status()
+    j = resp.json()
+    return j["access_token"], time.time() + j["expires_in"] - 60
 
 def get_access_token():
     token, exp = _cached_token()
@@ -48,33 +51,35 @@ def get_access_token():
 # --------------------------------------------------------------------
 def extract_pdf_adobe(file_bytes):
     """
-    Envia o PDF para o Adobe PDF Extract e devolve lista de textos (1 por página).
+    Envia o PDF para Adobe PDF Extract e devolve lista de textos (um por página).
     """
     token = get_access_token()
     headers = {
         "Authorization": f"Bearer {token}",
         "x-api-key": CLIENT_ID,
-        "Accept": "application/json",
     }
 
     files = {
         "file": ("document.pdf", file_bytes, "application/pdf"),
-        "options": (None, json.dumps({"elements": ["text"]}), "application/json"),
+    }
+    data = {
+        "extractRenditions": "false",
+        "elements": json.dumps({"elements": ["text"]}),
     }
 
-    r = requests.post(EXTRACT_URL, headers=headers, files=files, timeout=120)
-    r.raise_for_status()
-    data = r.json()
+    resp = requests.post(EXTRACT_URL, headers=headers, files=files, data=data, timeout=120)
+    resp.raise_for_status()
+    payload = resp.json()
 
     pages = {}
-    for elem in data.get("elements", []):
-        page = elem["Page"]
-        pages.setdefault(page, []).append(elem["Text"])
+    for elem in payload.get("elements", []):
+        pages.setdefault(elem["Page"], []).append(elem["Text"])
 
+    # Ordena páginas
     return ["\n".join(pages[p]) for p in sorted(pages)]
 
 # --------------------------------------------------------------------
-# ---------- Expressões regulares -----------------------------------
+# ---------- Expressões regulares ------------------------------------
 # --------------------------------------------------------------------
 re_ref  = re.compile(r"Refer[eê]ncia[:\s]+([A-ZÇ]+)\/(\d{4})", re.I)
 re_fgts = re.compile(r"BASE\s+CALC\.\s+FGTS\s+([\d\.,]+)", re.I)
@@ -136,7 +141,7 @@ def extrair_recibo_texto(texto):
 # ---------- Processamento principal --------------------------------
 # --------------------------------------------------------------------
 def processar_pdf(file_bytes, pagina_ini, pagina_fim):
-    # 1) Tenta via Adobe
+    # 1) Adobe Extract
     try:
         textos = extract_pdf_adobe(file_bytes)
         st.info("✅ Texto extraído via Adobe PDF Extract.")
@@ -161,7 +166,7 @@ def processar_pdf(file_bytes, pagina_ini, pagina_fim):
                                   "Base FGTS": fgts})
                 avisos_totais.extend(avisos)
 
-    # 2) Fallback OCR/pdfplumber se nada encontrado
+    # 2) OCR/pdfplumber fallback
     if not registros:
         with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
             total_pag = len(pdf.pages)
@@ -186,7 +191,7 @@ def processar_pdf(file_bytes, pagina_ini, pagina_fim):
     if not registros:
         return pd.DataFrame(), avisos_totais
 
-    # Monta DataFrame
+    # DataFrame
     rubricas = sorted(rubricas)
     linhas = []
     for reg in registros:
