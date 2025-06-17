@@ -83,7 +83,8 @@ def processar_pdf(file_bytes, pagina_ini, pagina_fim):
             resultado = extrair_recibo(pdf.pages[idx])
             if resultado:
                 mes_ano, provs, fgts, avisos = resultado
-                if any(r["Mês/Ano"] == mes_ano for r in registros):
+                if not mes_ano:
+                    avisos_totais.append(f"Página {idx+1}: Mês/Ano não encontrado")
                     continue  # ignora duplicata
                 rubricas.update(provs.keys())
                 registros.append({"Mês/Ano": mes_ano,
