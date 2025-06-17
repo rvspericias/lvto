@@ -83,19 +83,36 @@ def processar_pdf(file_bytes, pagina_ini, pagina_fim):
             resultado = extrair_recibo(pdf.pages[idx])
             if resultado:
                 mes_ano, provs, fgts, avisos = resultado
+                # evita duplicata (segunda metade da página)
                 if any(r["Mês/Ano"] == mes_ano for r in registros):
-                    continue  # ignora duplicata
+                    continue
                 rubricas.update(provs.keys())
                 registros.append({"Mês/Ano": mes_ano,
                                   "Proventos": provs,
                                   "Base FGTS": fgts})
                 avisos_totais.extend(avisos)
 
-    df = pd.DataFrame(registros)
+    # ---------- Se nada foi capturado ----------
+    if not registros:
+        return pd.DataFrame(), avisos_totais
 
-    # Retorna imediatamente se nada foi extraído
-    if df.empty:
-        return df, avisos_totais
+    # ---------- Monta DataFrame ----------
+    rubricas = sorted(rubricas)
+    linhas = []
+    for reg in registros:
+        linha = {"Mês/Ano": reg["Mês/Ano"], "Base FGTS": reg["Base FGTS"]}
+        for rub in rubricas:
+            linha[rub] = reg["Proventos"].get(rub, 0.0)
+        linhas.append(linha)
+
+    df = pd.DataFrame(linhas)
+
+    # ---------- Ordena cronologicamente ----------
+    df["Data"] = pd.to_datetime(df["Mês/Ano"], format="%b/%Y")
+    df = df.sort_values("Data").drop(columns="Data")
+    df = df[["Mês/Ano"] + rubricas + ["Base FGTS"]]
+
+    return df, avisos_totais
 
     # Expande rubricas em colunas
     rubricas = sorted(rubricas)
