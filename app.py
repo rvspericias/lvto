@@ -25,12 +25,7 @@ def normalizar_valor(txt):
         return 0.0, False
 
 def texto_pagina(page):
-    """Extrai texto; se falhar, usa OCR."""
-    texto = page.extract_text() or ""
-    if texto.strip():
-        return texto
-    img: Image.Image = page.to_image(resolution=300).original
-    return pytesseract.image_to_string(img, lang="por")
+    return page.extract_text(x_tolerance=1, y_tolerance=3) or ""
 
 def extrair_recibo(page):
     avisos, texto = [], texto_pagina(page)
