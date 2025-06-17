@@ -11,7 +11,7 @@ import re, io, pdfplumber, pandas as pd, streamlit as st
 st.set_page_config(page_title="Leitor de Contracheques", layout="wide")
 
 # ---------- Expressões regulares ----------
-re_ref  = re.compile(r"Referência[:\s]+([A-ZÇ]+)\/(\d{4})", re.I)
+re_ref = re.compile(r"Refer[eê]ncia[:\s]+([A-ZÇ]+)\/(\d{4})", re.I)
 re_fgts = re.compile(r"BASE\s+CALC\.\s+FGTS\s+([\d\.,]+)", re.I)
 
 # ---------- Funções utilitárias ----------
