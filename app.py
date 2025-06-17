@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Streamlit – Extrator de Contracheques
-Adobe PDF Extract (Server‑to‑Server) + OCR/pdfplumber fallback
+Adobe PDF Extract + OCR/pdfplumber fallback
 """
 
 import re, io, json, time, requests, pdfplumber, pandas as pd, streamlit as st, pytesseract
@@ -17,17 +17,14 @@ CLIENT_SECRET = "p8e-dJzha1EVFGaVN_F567J3fAG9Z6rSQLXj"
 ORG_ID        = "C63A22566851828C0A495C2F@AdobeOrg"
 SCOPES        = "openid,AdobeID,DCAPI"
 
-TOKEN_URL     = "https://ims-na1.adobelogin.com/ims/token/v3"
-EXTRACT_URL   = "https://pdf-services.adobe.io/operation/extract"
+TOKEN_URL   = "https://ims-na1.adobelogin.com/ims/token/v3"
+EXTRACT_URL = "https://pdf-services.adobe.io/operation/extract"
 
 # --------------------------------------------------------------------
 # ---------- TOKEN – cache automático --------------------------------
 # --------------------------------------------------------------------
 @lru_cache(maxsize=1)
 def _cached_token():
-    """
-    Solicita token (Client Credentials) e armazena em cache até ~1 min antes de expirar.
-    """
     data = {
         "client_id": CLIENT_ID,
         "client_secret": CLIENT_SECRET,
@@ -50,6 +47,9 @@ def get_access_token():
 # ---------- Adobe Extract PDF → texto por página --------------------
 # --------------------------------------------------------------------
 def extract_pdf_adobe(file_bytes):
+    """
+    Envia o PDF para Adobe PDF Extract e devolve lista de textos (um por página).
+    """
     token = get_access_token()
     headers = {
         "Authorization": f"Bearer {token}",
@@ -57,9 +57,7 @@ def extract_pdf_adobe(file_bytes):
     }
 
     files = {
-        # PDF
-        "file": ("document.pdf", file_bytes, "application/pdf"),
-        # Demais campos como "partes" do multipart
+        "file": ("document.pdf", io.BytesIO(file_bytes), "application/pdf"),
         "extractRenditions": (None, "false"),
         "elements": (None, json.dumps({"elements": ["text"]}), "application/json"),
     }
