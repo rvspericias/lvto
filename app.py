@@ -83,8 +83,7 @@ def processar_pdf(file_bytes, pagina_ini, pagina_fim):
             resultado = extrair_recibo(pdf.pages[idx])
             if resultado:
                 mes_ano, provs, fgts, avisos = resultado
-                if not mes_ano:
-                    avisos_totais.append(f"Página {idx+1}: Mês/Ano não encontrado")
+                if any(r["Mês/Ano"] == mes_ano for r in registros):
                     continue  # ignora duplicata
                 rubricas.update(provs.keys())
                 registros.append({"Mês/Ano": mes_ano,
@@ -92,16 +91,17 @@ def processar_pdf(file_bytes, pagina_ini, pagina_fim):
                                   "Base FGTS": fgts})
                 avisos_totais.extend(avisos)
 
-    # DataFrame
-    rubricas = sorted(rubricas)
-    linhas = []
-    for reg in registros:
-        linha = {"Mês/Ano": reg["Mês/Ano"], "Base FGTS": reg["Base FGTS"]}
-        for rub in rubricas:
-            linha[rub] = reg["Proventos"].get(rub, 0.0)
-        linhas.append(linha)
+    df = pd.DataFrame(registros)
 
-    df = pd.DataFrame(linhas)
+    # Retorna imediatamente se nada foi extraído
+    if df.empty:
+        return df, avisos_totais
+
+    # Expande rubricas em colunas
+    rubricas = sorted(rubricas)
+    for rub in rubricas:
+        df[rub] = df["Proventos"].apply(lambda d: d.get(rub, 0.0))
+    df.drop(columns="Proventos", inplace=True)
 
     # Ordenação cronológica
     df["Data"] = pd.to_datetime(df["Mês/Ano"], format="%b/%Y")
